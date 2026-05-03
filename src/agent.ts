@@ -3,10 +3,15 @@ import path from 'path';
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-import { AGENT_MAX_TURNS, PROJECT_ROOT, agentCwd } from './config.js';
+import { AGENT_MAX_TURNS, PROJECT_ROOT, agentCwd, agentProviderConfig } from './config.js';
 import { readEnvFile } from './env.js';
 import { classifyError, AgentError } from './errors.js';
 import { logger } from './logger.js';
+import {
+  applyProviderToEnv,
+  resolveProvider,
+  type ProviderOverride,
+} from './providers.js';
 import { getScrubbedSdkEnv } from './security.js';
 import { requireEnabled } from './kill-switches.js';
 
@@ -181,6 +186,7 @@ export async function runAgent(
   abortController?: AbortController,
   onStreamText?: (accumulatedText: string) => void,
   mcpAllowlist?: string[],
+  providerOverride?: ProviderOverride,
 ): Promise<AgentResult> {
   // Centralized kill-switch enforcement. Throws KillSwitchDisabledError if
   // LLM_SPAWN_ENABLED has been flipped off — caller is expected to surface
@@ -199,6 +205,21 @@ export async function runAgent(
   // subprocess. A prompt-injected agent that calls `env` or `cat .env`
   // can otherwise read every credential the parent process holds.
   const sdkEnv = getScrubbedSdkEnv(secrets);
+
+  // Resolve which LLM provider to use. Falls back to native Claude if
+  // nothing is configured. Non-Anthropic providers route through an
+  // Anthropic-compatible endpoint via ANTHROPIC_BASE_URL.
+  const resolvedProvider = resolveProvider(
+    providerOverride ?? agentProviderConfig,
+    model,
+  );
+  applyProviderToEnv(sdkEnv, resolvedProvider);
+  if (resolvedProvider.id !== 'claude') {
+    logger.info(
+      { provider: resolvedProvider.id, baseUrl: resolvedProvider.baseUrl, model: resolvedProvider.model },
+      'Using non-default LLM provider',
+    );
+  }
 
   let newSessionId: string | undefined;
   let resultText: string | null = null;
@@ -421,6 +442,7 @@ export async function runAgentWithRetry(
   onRetry?: (attempt: number, error: AgentError) => void,
   fallbackModels?: string[],
   mcpAllowlist?: string[],
+  providerOverride?: ProviderOverride,
 ): Promise<AgentResult> {
   let lastError: AgentError | undefined;
 
@@ -435,7 +457,7 @@ export async function runAgentWithRetry(
       return await runAgent(
         message, sessionId, onTyping, onProgress,
         currentModel, abortController, onStreamText,
-        mcpAllowlist,
+        mcpAllowlist, providerOverride,
       );
     } catch (err) {
       if (!(err instanceof AgentError)) throw err;

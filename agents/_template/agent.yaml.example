@@ -14,9 +14,34 @@ description: What this agent does
 # Create a bot via @BotFather in Telegram, paste the token into .env.
 telegram_bot_token_env: MYAGENT_BOT_TOKEN
 
-# Default model. Options: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5
-# Users can override per-chat with /model in Telegram.
+# Default model. For native Claude: claude-opus-4-6, claude-sonnet-4-6,
+# claude-haiku-4-5. For other providers, use that provider's model id (see
+# `provider:` below). Users can override per-chat with /model in Telegram.
 model: claude-sonnet-4-6
+
+# LLM provider (optional). Defaults to native Claude.
+#
+# Short form — pick a preset and ClaudeClaw will use that provider's
+# baked-in base URL plus an env var with the API key (e.g. OPENROUTER_API_KEY).
+# Presets: claude, openrouter, zai, kimi, moonshot, deepseek, glama,
+#          helicone, requesty, litellm, custom.
+#
+# provider: openrouter
+# model: anthropic/claude-sonnet-4.5
+#
+# Long form — for custom Anthropic-compatible endpoints or to override
+# the API key env var:
+#
+# provider:
+#   name: custom
+#   base_url: http://localhost:4000     # e.g. a LiteLLM proxy
+#   api_key_env: MY_GATEWAY_KEY
+#   model: gpt-5
+#
+# To use OpenAI / Gemini directly, run a LiteLLM proxy in front of them and
+# point this `custom` block at it. The Claude Agent SDK only speaks the
+# Anthropic Messages API, so a translator is required for non-compatible
+# vendors.
 
 # Obsidian integration (optional).
 # Assign folders from your vault so this agent auto-loads relevant context.

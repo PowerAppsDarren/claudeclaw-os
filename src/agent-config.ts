@@ -39,6 +39,17 @@ export interface AgentConfig {
   botTokenEnv: string;
   botToken: string;
   model?: string;
+  /** Optional LLM provider override. See src/providers.ts for the list of
+   *  preset ids ('claude', 'openrouter', 'zai', 'kimi', 'deepseek', ...).
+   *  When unset, the agent uses native Claude (or whatever LLM_PROVIDER
+   *  is set in .env). */
+  provider?: {
+    provider?: string;
+    baseUrl?: string;
+    apiKeyEnv?: string;
+    apiKey?: string;
+    model?: string;
+  };
   mcpServers?: string[];
   /** Per-agent war-room tool allowlist. Tokens are SDK tool names
    *  ("Bash", "Write") or "mcp:<name>" entries to opt an MCP server in.
@@ -127,6 +138,40 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     };
   }
 
+  // Provider override block. Two shapes are accepted:
+  //   provider: openrouter            # short form, just the preset id
+  //   provider:                       # long form for non-preset endpoints
+  //     name: custom
+  //     base_url: https://my-proxy/v1
+  //     api_key_env: MY_KEY
+  let provider: AgentConfig['provider'];
+  const providerRaw = raw['provider'];
+  if (typeof providerRaw === 'string') {
+    provider = { provider: providerRaw };
+  } else if (providerRaw && typeof providerRaw === 'object') {
+    const p = providerRaw as Record<string, unknown>;
+    provider = {
+      provider: typeof p['name'] === 'string' ? (p['name'] as string)
+        : typeof p['provider'] === 'string' ? (p['provider'] as string)
+        : typeof p['id'] === 'string' ? (p['id'] as string)
+        : undefined,
+      baseUrl: typeof p['base_url'] === 'string' ? (p['base_url'] as string)
+        : typeof p['baseUrl'] === 'string' ? (p['baseUrl'] as string)
+        : undefined,
+      apiKeyEnv: typeof p['api_key_env'] === 'string' ? (p['api_key_env'] as string)
+        : typeof p['apiKeyEnv'] === 'string' ? (p['apiKeyEnv'] as string)
+        : undefined,
+      apiKey: typeof p['api_key'] === 'string' ? (p['api_key'] as string) : undefined,
+      model: typeof p['model'] === 'string' ? (p['model'] as string) : undefined,
+    };
+  }
+  // If the top-level model field exists and provider doesn't already
+  // specify one, copy it across so a single `model:` declaration still
+  // applies to whichever endpoint is selected.
+  if (provider && !provider.model && model) {
+    provider.model = model;
+  }
+
   const mcpServers = raw['mcp_servers'] as string[] | undefined;
   // War-room tool policy override. If present in agent.yaml, this list
   // overrides the per-agent default in warroom-tool-policy.ts. Tokens
@@ -142,6 +187,7 @@ export function loadAgentConfig(agentId: string): AgentConfig {
     botTokenEnv,
     botToken,
     model,
+    provider,
     mcpServers,
     warroomTools,
     obsidian,
