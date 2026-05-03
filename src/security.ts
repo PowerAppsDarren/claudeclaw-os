@@ -278,7 +278,16 @@ const SDK_SECRET_NAME_PATTERNS = [
   /^SECRET_/,
 ] as const;
 
-const SDK_AUTH_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
+// Auth-related env vars the SDK subprocess is allowed to see. Includes
+// ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN so non-Anthropic providers
+// (OpenRouter, Z.AI, Kimi, ...) can route through Anthropic-compatible
+// endpoints. These are set by applyProviderToEnv in src/providers.ts.
+const SDK_AUTH_VARS = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+] as const;
 
 /**
  * Return a scrubbed env dict suitable for passing to `query({ env, ... })`.
@@ -286,8 +295,10 @@ const SDK_AUTH_VARS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'] as const;
  * (e.g. when the caller is itself running with secrets stripped from
  * process.env). When omitted, falls back to whatever's in process.env.
  */
+export type SdkAuthVar = typeof SDK_AUTH_VARS[number];
+
 export function getScrubbedSdkEnv(
-  authSecrets?: Partial<Record<typeof SDK_AUTH_VARS[number], string>>,
+  authSecrets?: Partial<Record<SdkAuthVar, string>>,
 ): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...process.env };
 
