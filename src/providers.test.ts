@@ -4,6 +4,7 @@ import path from 'path';
 
 import {
   applyProviderToEnv,
+  ProviderConfigError,
   PROVIDER_PRESETS,
   resolveProvider,
 } from './providers.js';
@@ -33,6 +34,8 @@ describe('resolveProvider', () => {
     delete process.env.OPENROUTER_API_KEY;
     delete process.env.ZAI_API_KEY;
     delete process.env.LITELLM_API_KEY;
+    delete process.env.PROVIDER_KEYS_FROM_PROCESS_ENV;
+    delete process.env.MY_CUSTOM_KEY;
   });
 
   it('defaults to claude when nothing is configured', () => {
@@ -58,15 +61,38 @@ describe('resolveProvider', () => {
     expect(r.authToken).toBe('zai-test');
   });
 
-  it('honors per-call apiKeyEnv override', () => {
-    process.env.MY_CUSTOM_KEY = 'custom-key-value';
-    writeEnv('');
+  it('honors per-call apiKeyEnv override (reads from .env)', () => {
+    writeEnv('MY_CUSTOM_KEY=custom-key-from-file\n');
     const r = resolveProvider({
       provider: 'openrouter',
       apiKeyEnv: 'MY_CUSTOM_KEY',
     });
-    expect(r.authToken).toBe('custom-key-value');
-    delete process.env.MY_CUSTOM_KEY;
+    expect(r.authToken).toBe('custom-key-from-file');
+  });
+
+  it('does NOT read provider keys from process.env by default', () => {
+    // Project convention: secrets live in .env. A stray shell-exported key
+    // must not silently route traffic to a third-party endpoint.
+    process.env.OPENROUTER_API_KEY = 'process-env-leak';
+    writeEnv('');
+    const r = resolveProvider({ provider: 'openrouter' });
+    expect(r.authToken).toBe('');
+  });
+
+  it('reads from process.env when PROVIDER_KEYS_FROM_PROCESS_ENV=true', () => {
+    process.env.OPENROUTER_API_KEY = 'opt-in-process-key';
+    writeEnv('PROVIDER_KEYS_FROM_PROCESS_ENV=true\n');
+    const r = resolveProvider({ provider: 'openrouter' });
+    expect(r.authToken).toBe('opt-in-process-key');
+  });
+
+  it('.env wins over process.env even with opt-in flag', () => {
+    process.env.OPENROUTER_API_KEY = 'process-env-value';
+    writeEnv(
+      'PROVIDER_KEYS_FROM_PROCESS_ENV=true\nOPENROUTER_API_KEY=dotenv-wins\n',
+    );
+    const r = resolveProvider({ provider: 'openrouter' });
+    expect(r.authToken).toBe('dotenv-wins');
   });
 
   it('falls back to custom for unknown provider ids', () => {
@@ -124,18 +150,39 @@ describe('applyProviderToEnv', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
-  it('throws when a non-Claude provider has no base URL', () => {
+  it('throws ProviderConfigError when a non-Claude provider has no base URL', () => {
     expect(() => applyProviderToEnv({}, {
       id: 'custom', baseUrl: '', authToken: 'k', model: undefined,
-    })).toThrow(/no base URL/);
+    })).toThrow(ProviderConfigError);
   });
 
-  it('throws when a non-Claude provider has no API key', () => {
-    expect(() => applyProviderToEnv({}, {
-      id: 'openrouter',
-      baseUrl: 'https://openrouter.ai/api/v1',
-      authToken: '',
-      model: undefined,
-    })).toThrow(/no API key/);
+  it('throws ProviderConfigError when a non-Claude provider has no API key', () => {
+    let thrown: unknown;
+    try {
+      applyProviderToEnv({}, {
+        id: 'openrouter',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        authToken: '',
+        model: undefined,
+      });
+    } catch (e) { thrown = e; }
+    expect(thrown).toBeInstanceOf(ProviderConfigError);
+    expect((thrown as ProviderConfigError).providerId).toBe('openrouter');
+    expect((thrown as Error).message).toContain('OPENROUTER_API_KEY');
+  });
+
+  it('does NOT mutate env when validation fails (native creds preserved)', () => {
+    const env: Record<string, string | undefined> = {
+      ANTHROPIC_API_KEY: 'sk-anth',
+      CLAUDE_CODE_OAUTH_TOKEN: 'oauth',
+    };
+    expect(() => applyProviderToEnv(env, {
+      id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', authToken: '', model: undefined,
+    })).toThrow(ProviderConfigError);
+    // Native creds must still be present so a fallback to native Claude works.
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-anth');
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('oauth');
+    expect(env.ANTHROPIC_BASE_URL).toBeUndefined();
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 });

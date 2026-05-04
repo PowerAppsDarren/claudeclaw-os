@@ -101,6 +101,13 @@ export interface UsageInfo {
    * history + tool results for that call. Use this for context warnings.
    */
   lastCallInputTokens: number;
+  /**
+   * Provider id this turn ran against ('claude', 'openrouter', 'zai', ...).
+   * Cost footer / dashboards use this to decide whether `totalCostUsd` is
+   * meaningful — Anthropic-compatible third-party endpoints don't return
+   * accurate Anthropic-shaped pricing, so the SDK reports $0.00 for them.
+   */
+  provider?: string;
 }
 
 /** Progress event emitted during agent execution for Telegram feedback. */
@@ -375,6 +382,7 @@ export async function runAgent(
             preCompactTokens,
             lastCallCacheRead,
             lastCallInputTokens,
+            provider: resolvedProvider.id,
           };
           logger.info(
             {
@@ -405,9 +413,24 @@ export async function runAgent(
     const contextTokens = lastCallInputTokens || lastCallCacheRead || 0;
     const classified = classifyError(err, contextTokens || undefined);
     logger.error(
-      { category: classified.category, recovery: classified.recovery, originalMsg: (err as Error)?.message },
+      {
+        category: classified.category,
+        recovery: classified.recovery,
+        provider: resolvedProvider.id,
+        baseUrl: resolvedProvider.id === 'claude' ? undefined : resolvedProvider.baseUrl,
+        originalMsg: (err as Error)?.message,
+      },
       'Agent query failed (classified)',
     );
+    // Tag the user-facing message with the provider when it's not native
+    // Claude so a user staring at "401 unauthorized" knows which key to fix.
+    if (
+      resolvedProvider.id !== 'claude' &&
+      classified.recovery?.userMessage &&
+      !classified.recovery.userMessage.includes(resolvedProvider.id)
+    ) {
+      classified.recovery.userMessage = `[${resolvedProvider.id}] ${classified.recovery.userMessage}`;
+    }
     throw classified;
   } finally {
     clearInterval(typingInterval);

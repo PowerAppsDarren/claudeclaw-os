@@ -33,26 +33,37 @@ export function buildCostFooter(
     ? model.replace('claude-', '').replace(/-\d+[-\d]*$/, '')
     : 'unknown';
 
+  // Non-Claude providers (OpenRouter, Z.AI, Kimi, ...) come back through
+  // the Anthropic-shaped Messages API but their pricing isn't Anthropic
+  // pricing. The SDK's total_cost_usd is computed against Anthropic rates
+  // and is meaningless (often $0.00) for third-party endpoints. Show the
+  // provider tag instead of a fake dollar amount.
+  const isNativeClaude = !usage.provider || usage.provider === 'claude';
+  const formatCost = (): string =>
+    isNativeClaude
+      ? `$${usage.totalCostUsd.toFixed(2)}`
+      : `${usage.provider} (cost n/a)`;
+
   if (mode === 'compact') {
-    return `\n\n[${modelLabel}]`;
+    const tag = isNativeClaude ? modelLabel : `${modelLabel} via ${usage.provider}`;
+    return `\n\n[${tag}]`;
   }
 
   if (mode === 'verbose') {
     const inTokens = formatTokens(usage.inputTokens);
     const outTokens = formatTokens(usage.outputTokens);
-    return `\n\n[${modelLabel} | ${inTokens} in | ${outTokens} out]`;
+    const tag = isNativeClaude ? modelLabel : `${modelLabel} via ${usage.provider}`;
+    return `\n\n[${tag} | ${inTokens} in | ${outTokens} out]`;
   }
 
   if (mode === 'cost') {
-    const cost = `$${usage.totalCostUsd.toFixed(2)}`;
-    return `\n\n[${modelLabel} | ${cost}]`;
+    return `\n\n[${modelLabel} | ${formatCost()}]`;
   }
 
   if (mode === 'full') {
     const inTokens = formatTokens(usage.inputTokens);
     const outTokens = formatTokens(usage.outputTokens);
-    const cost = `$${usage.totalCostUsd.toFixed(2)}`;
-    return `\n\n[${modelLabel} | ${inTokens} in | ${outTokens} out | ${cost}]`;
+    return `\n\n[${modelLabel} | ${inTokens} in | ${outTokens} out | ${formatCost()}]`;
   }
 
   return '';

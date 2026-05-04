@@ -175,6 +175,7 @@ export function resolveProvider(
     'LLM_PROVIDER',
     'LLM_PROVIDER_BASE_URL',
     'LLM_PROVIDER_API_KEY_ENV',
+    'PROVIDER_KEYS_FROM_PROCESS_ENV',
   ]);
 
   const requested =
@@ -199,12 +200,23 @@ export function resolveProvider(
       envDefaults['LLM_PROVIDER_API_KEY_ENV'] ||
       preset.apiKeyEnv;
     if (keyEnvName) {
-      const fromProcess = process.env[keyEnvName];
-      if (fromProcess) {
-        authToken = fromProcess;
-      } else {
-        const fromFile = readEnvFile([keyEnvName])[keyEnvName];
-        if (fromFile) authToken = fromFile;
+      // Project convention: secrets live in .env, not process.env, so they
+      // don't leak to spawned subprocesses. We read .env first; process.env
+      // is only consulted as a last resort and only when explicitly opted in
+      // via PROVIDER_KEYS_FROM_PROCESS_ENV=true. This prevents a stray
+      // shell-exported key from silently routing all traffic to a
+      // third-party endpoint without it appearing in any project file.
+      const fromFile = readEnvFile([keyEnvName])[keyEnvName];
+      if (fromFile) {
+        authToken = fromFile;
+      } else if (
+        (envDefaults['PROVIDER_KEYS_FROM_PROCESS_ENV'] ||
+          process.env['PROVIDER_KEYS_FROM_PROCESS_ENV'] ||
+          ''
+        ).toLowerCase() === 'true'
+      ) {
+        const fromProcess = process.env[keyEnvName];
+        if (fromProcess) authToken = fromProcess;
       }
     }
   }
@@ -217,6 +229,18 @@ export function resolveProvider(
   };
 }
 
+/** Thrown when a non-Claude provider is selected but its config is incomplete.
+ *  Carries the provider id so callers (Telegram bot, war-room, etc.) can
+ *  surface a provider-aware message instead of a generic SDK auth error. */
+export class ProviderConfigError extends Error {
+  readonly providerId: ProviderId;
+  constructor(providerId: ProviderId, message: string) {
+    super(message);
+    this.name = 'ProviderConfigError';
+    this.providerId = providerId;
+  }
+}
+
 /**
  * Apply a resolved provider to the env dict that gets handed to the
  * Claude Agent SDK subprocess. Mutates and returns the env. Caller is
@@ -224,13 +248,17 @@ export function resolveProvider(
  *
  * Behavior:
  *   - claude (default): no-op. SDK uses its own defaults.
- *   - everything else: sets ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN.
- *     We also unset ANTHROPIC_API_KEY so the SDK doesn't accidentally
- *     send a stale Anthropic key to a third-party endpoint.
+ *   - everything else: validates baseUrl + authToken FIRST, then sets
+ *     ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN. We unset ANTHROPIC_API_KEY
+ *     and CLAUDE_CODE_OAUTH_TOKEN so the SDK doesn't accidentally send a
+ *     stale Anthropic credential to a third-party endpoint. Validation
+ *     happens before any deletion: a bad provider config leaves the env
+ *     untouched so a retry that drops back to native Claude still works.
  *
- * If id !== 'claude' but no baseUrl could be resolved (custom provider
- * with nothing configured), throws — failing loud is better than silently
- * sending traffic to api.anthropic.com with a non-Anthropic key.
+ * If id !== 'claude' but the config is incomplete, throws ProviderConfigError
+ * — failing loud is better than silently sending traffic to api.anthropic.com
+ * with a non-Anthropic key, or stripping native creds and then exiting with
+ * "no auth available" deeper in the SDK.
  */
 export function applyProviderToEnv(
   env: Record<string, string | undefined>,
@@ -240,19 +268,23 @@ export function applyProviderToEnv(
     return env;
   }
 
+  // Validate FIRST — we never delete native creds before knowing the new
+  // creds are usable. Order matters: a thrown error here leaves env intact.
   if (!resolved.baseUrl) {
-    throw new Error(
+    throw new ProviderConfigError(
+      resolved.id,
       `Provider "${resolved.id}" has no base URL configured. Set provider_base_url in agent.yaml or LLM_PROVIDER_BASE_URL in .env.`,
     );
   }
-
   if (!resolved.authToken) {
     const keyEnv = PROVIDER_PRESETS[resolved.id].apiKeyEnv;
-    throw new Error(
+    throw new ProviderConfigError(
+      resolved.id,
       `Provider "${resolved.id}" has no API key. Set ${keyEnv} in .env (or override provider_api_key_env in agent.yaml).`,
     );
   }
 
+  // Both checks passed — safe to mutate.
   env['ANTHROPIC_BASE_URL'] = resolved.baseUrl;
   env['ANTHROPIC_AUTH_TOKEN'] = resolved.authToken;
   delete env['ANTHROPIC_API_KEY'];

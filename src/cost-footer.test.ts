@@ -75,4 +75,35 @@ describe('buildCostFooter', () => {
     expect(result).toContain('sonnet');
     expect(result).not.toContain('claude-');
   });
+
+  describe('non-Claude providers', () => {
+    it('cost mode shows "n/a" instead of $0.00 for non-Claude providers', () => {
+      // SDK returns 0 for cost when routed through Anthropic-compatible
+      // third-party endpoints — Anthropic pricing doesn't apply.
+      const usage = makeUsage({ provider: 'openrouter', totalCostUsd: 0 });
+      const result = buildCostFooter('cost', usage, 'anthropic/claude-sonnet-4.5');
+      expect(result).toContain('cost n/a');
+      expect(result).toContain('openrouter');
+      expect(result).not.toMatch(/\$0\.00/);
+    });
+
+    it('full mode shows "n/a" instead of $0.00 for non-Claude providers', () => {
+      const usage = makeUsage({ provider: 'zai', totalCostUsd: 0 });
+      const result = buildCostFooter('full', usage, 'glm-4.6');
+      expect(result).toContain('zai (cost n/a)');
+      expect(result).not.toMatch(/\$0\.00/);
+    });
+
+    it('compact mode tags the provider for non-Claude turns', () => {
+      const usage = makeUsage({ provider: 'kimi', totalCostUsd: 0 });
+      const result = buildCostFooter('compact', usage, 'kimi-k2');
+      expect(result).toContain('via kimi');
+    });
+
+    it('treats missing provider field as native Claude (back-compat)', () => {
+      const result = buildCostFooter('cost', makeUsage(), 'claude-opus-4-6');
+      expect(result).toContain('$0.04');
+      expect(result).not.toContain('n/a');
+    });
+  });
 });

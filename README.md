@@ -352,6 +352,47 @@ The skill reads `GOOGLE_API_KEY` from the environment automatically.
 
 ---
 
+### Other LLM providers (optional)
+
+**What it does:** Routes ClaudeClaw through OpenRouter, Z.AI (GLM), Kimi/Moonshot, DeepSeek, Glama, Helicone, Requesty, a local LiteLLM proxy, or any custom Anthropic-compatible endpoint instead of Anthropic directly.
+
+**Why this works:** ClaudeClaw is built on the Claude Agent SDK, which speaks the Anthropic Messages API. Any provider that exposes an Anthropic-compatible endpoint is a drop-in. For vendors that don't (raw OpenAI, raw Gemini), front them with a local LiteLLM proxy and use the `custom` preset.
+
+**Setup (global default in `.env`):**
+
+```bash
+LLM_PROVIDER=openrouter        # or zai, kimi, moonshot, deepseek, glama, helicone, requesty, litellm, custom
+OPENROUTER_API_KEY=sk-or-...   # use the key env var matching your provider
+```
+
+**Setup (per-agent in `agent.yaml`):**
+
+```yaml
+provider: openrouter
+model: anthropic/claude-sonnet-4.5
+```
+
+Or the long form for any custom Anthropic-compatible gateway:
+
+```yaml
+provider:
+  name: custom
+  base_url: http://localhost:4000   # e.g. a LiteLLM proxy
+  api_key_env: MY_GATEWAY_KEY
+  model: anthropic/claude-sonnet-4.5
+```
+
+**Important details:**
+
+- **Keys are read from `.env`, not `process.env`.** A stray shell-exported key won't silently route your traffic to a third-party endpoint. Set `PROVIDER_KEYS_FROM_PROCESS_ENV=true` in `.env` to opt into the old behavior — only do this if you inject keys via launchd/systemd/Docker env.
+- **Cost reporting**: when a non-Claude provider is active, the cost footer shows `(cost n/a)` instead of a fake `$0.00`. The SDK computes cost against Anthropic pricing, which doesn't apply to third-party endpoints.
+- **Errors are tagged with the provider id**, so a `401 unauthorized` tells you which key to fix.
+- **Model ids** are passed through verbatim. Use whatever id the gateway expects: OpenRouter slugs (`anthropic/claude-sonnet-4.5`, `openai/gpt-4o`), LiteLLM names (`gemini/gemini-2.5-pro`, `bedrock/anthropic.claude-sonnet-4-v1`), etc.
+
+**Get a key:** [openrouter.ai/keys](https://openrouter.ai/keys), [z.ai](https://z.ai), [platform.moonshot.ai](https://platform.moonshot.ai), [platform.deepseek.com](https://platform.deepseek.com), [glama.ai](https://glama.ai), or run a [LiteLLM](https://github.com/BerriAI/litellm) proxy locally.
+
+---
+
 ### Google Workspace CLI (optional)
 
 > ClaudeClaw ships with bundled Gmail and Google Calendar skills that work great out of the box. This is an **optional alternative** if you want broader Google Workspace access from a single tool.
